@@ -1,0 +1,174 @@
+======================================================================
+SECTION 1 — DATA
+======================================================================
+Rows: 10,000   Columns: 11   Nulls: 0
+Churn rate: 20.4%
+
+NOTE: a model that predicts 'nobody churns' is 79.6% accurate
+and worth exactly zero dollars. Accuracy is the wrong metric here.
+
+======================================================================
+SECTION 2 — WHO CHURNS
+======================================================================
+
+--- Active member (digital/product engagement)
+                churn_rate  customers  lift_vs_base
+IsActiveMember                                     
+0                     26.9       4849          1.32
+1                     14.3       5151          0.70
+
+--- Number of products held
+             churn_rate  customers  lift_vs_base
+NumProducts                                     
+1                  27.7       5084          1.36
+2                   7.6       4590          0.37
+3                  82.7        266          4.06
+4                 100.0         60          4.91
+
+--- Age band
+         churn_rate  customers  lift_vs_base
+AgeBand                                     
+18-30           7.5       1968          0.37
+31-40          12.1       4451          0.59
+41-50          34.0       2320          1.67
+51-60          56.2        797          2.76
+60+            24.8        464          1.22
+
+--- Geography
+           churn_rate  customers  lift_vs_base
+Geography                                     
+France           16.2       5014          0.80
+Germany          32.4       2509          1.59
+Spain            16.7       2477          0.82
+
+--- Gender
+        churn_rate  customers  lift_vs_base
+Gender                                     
+Female        25.1       4543          1.23
+Male          16.5       5457          0.81
+
+--- Balance band
+             churn_rate  customers  lift_vs_base
+BalanceBand                                     
+Zero               13.8       3617          0.68
+<50k               34.7         75          1.70
+50-100k            19.9       1509          0.98
+100-150k           25.8       3830          1.27
+150k+              23.1        969          1.13
+
+======================================================================
+SECTION 3 — MODELING
+======================================================================
+Train 7,500 / Test 2,500 (stratified)
+
+Logistic Regression
+  CV ROC-AUC (5-fold) : 0.761 (+/- 0.007)
+  Test ROC-AUC        : 0.787
+  Test PR-AUC         : 0.483  (baseline = 0.204)
+
+Gradient Boosting
+  CV ROC-AUC (5-fold) : 0.858 (+/- 0.007)
+  Test ROC-AUC        : 0.872
+  Test PR-AUC         : 0.724  (baseline = 0.204)
+
+>> Selected: Gradient Boosting
+
+Churn drivers (logistic regression, standardized):
+odds_ratio > 1 = raises churn odds;  < 1 = protective
+                    coef  odds_ratio
+Geography_Germany  0.810        2.25
+Age                0.782        2.18
+Balance            0.173        1.19
+EstimatedSalary    0.058        1.06
+Geography_Spain    0.051        1.05
+Tenure            -0.008        0.99
+HasCreditCard     -0.026        0.97
+NumProducts       -0.047        0.95
+CreditScore       -0.088        0.92
+IsActiveMember    -0.442        0.64
+Gender_Male       -0.541        0.58
+
+Permutation importance (Gradient Boosting, drop in test ROC-AUC):
+Age                0.1284
+NumProducts        0.1257
+Balance            0.0610
+Geography          0.0359
+IsActiveMember     0.0303
+Gender             0.0082
+CreditScore        0.0025
+Tenure             0.0006
+HasCreditCard      0.0000
+EstimatedSalary   -0.0003
+
+======================================================================
+SECTION 4 — COST-BENEFIT: WHERE DO WE SET THE THRESHOLD?
+======================================================================
+Assumptions (change these and the answer changes — that is the point):
+  Retention offer cost      : $100 per customer contacted
+  Customer lifetime value   : $1500
+  Offer success rate        : 30% of true churners contacted are saved
+
+Economics per contacted customer:
+  True churner  -> spend $100, save them 30% of the time
+                   => expected value = 0.3 x $1500 - $100 = $350
+  Non-churner   -> spend $100 on someone who was never leaving
+                   => expected value = -$100
+
+Net value by threshold (test set, n = 2,500):
+ threshold  contacted  true_churners_caught  churners_missed  wasted_contacts  precision  recall  net_value
+      0.10       1847                   493               16             1354       0.27    0.97  37,150.00
+      0.20       1373                   465               44              908       0.34    0.91  71,950.00
+      0.30       1071                   441               68              630       0.41    0.87  91,350.00
+      0.40        861                   413               96              448       0.48    0.81  99,750.00
+      0.50        699                   377              132              322       0.54    0.74  99,750.00
+      0.60        551                   335              174              216       0.61    0.66  95,650.00
+      0.70        425                   299              210              126       0.70    0.59  92,050.00
+      0.80        298                   242              267               56       0.81    0.48  79,100.00
+      0.90        166                   154              355               12       0.93    0.30  52,700.00
+
+>> OPTIMAL THRESHOLD: 0.48
+   Contact 728 of 2,500 customers (29% of the book)
+   Catch 386 of 509 churners (recall 76%)
+   Precision 53% — 342 contacts wasted on customers who would have stayed
+   NET VALUE: $100,900
+
+>> The naive 0.50 cutoff most people ship:
+   NET VALUE: $99,750
+   Difference: $1,150 on a 2,500-customer test set.
+
+>> Contacting EVERY customer indiscriminately:
+   NET VALUE: $-20,950
+
+Classification report at the optimal threshold:
+              precision    recall  f1-score   support
+
+      Stayed      0.931     0.828     0.876      1991
+     Churned      0.530     0.758     0.624       509
+
+    accuracy                          0.814      2500
+   macro avg      0.730     0.793     0.750      2500
+weighted avg      0.849     0.814     0.825      2500
+
+======================================================================
+SECTION 5 — TARGETING LIST (what the retention team actually receives)
+======================================================================
+
+D10 = HIGHEST predicted risk. 'lift' = multiple of the 20.4% base churn rate.
+        customers  actual_churn_rate  avg_predicted_prob  avg_balance  pct_active  avg_age  lift
+decile                                                                                          
+D10           250               85.6                92.8      96390.0        22.8     49.5  4.20
+D9            250               42.8                74.2      85435.0        38.0     44.6  2.10
+D8            250               27.2                55.4      94762.0        48.0     41.3  1.34
+D7            250               18.0                39.3      95895.0        50.8     39.7  0.88
+D6            250               10.0                28.0      98658.0        46.8     37.4  0.49
+D5            250                6.0                19.9      95641.0        52.8     36.4  0.29
+D4            250                6.0                14.5      70994.0        63.2     36.5  0.29
+D3            250                3.2                 9.5      61262.0        60.8     34.0  0.16
+D2            250                3.2                 5.7      35890.0        60.0     34.5  0.16
+D1            250                1.6                 2.6      34663.0        67.2     33.6  0.08
+
+>> The top 2 deciles are 20% of the book and contain 63% of all churners.
+
+Saved: figures/churn_analysis.png
+Saved: figures/retention_call_list_top200.csv
+Saved: figures/threshold_economics.csv, figures/risk_deciles.csv
